@@ -5,26 +5,226 @@ date: "2024-04-15"
 output: html_document
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+Libraries Used in this Exercise
+```{r}
+library(tidyverse)
+library(naniar)
+library(AICcmodavg)
+library(ggplot2)
+library(jtools)
+library(MuMIn)
 ```
 
-## R Markdown
+Loading Dataset
+```{r}
+f <- "https://raw.githubusercontent.com/difiore/ada-2024-datasets/main/Mammal_lifehistories_v2.txt"
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+d <- read_tsv(f, col_names = TRUE)
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
+d
 ```
 
-## Including Plots
 
-You can also embed plots, for example:
+# Step 1: Replacing -999 values with NA
+```{r}
+d %>% replace_with_na_all(condition = ~.x == -999)
+```
+# Steps 2 + 3: Droping the variables litter size and refs and log transforming all remaining variables
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+```{r}
+d <- d %>% 
+  subset(select = -c(refs, `litter size`)) %>% 
+  mutate(
+    logMass = log(`mass(g)`),
+    logGestation = log(`gestation(mo)`), 
+    logNewborn = log(`newborn(g)`), 
+    logWeaning = log(`weaning(mo)`),
+    logWean.Mass = log(`wean mass(g)`),
+    logAFR = log(`AFR(mo)`), 
+    logMax.Life = log(`max. life(mo)`), 
+    `logLitters/Year` = log(`litters/year`)
+  )
+
+d
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+# Step 4: Regressing Variables
+```{r}
+relGest <- resid(lm(logGestation ~ logMass, data = d, na.action = na.exclude))
+relWean <- resid(lm(logWeaning ~ logMass, data = d, na.action = na.exclude))
+relAFR <- resid(lm(logAFR ~ logMass, data = d, na.action = na.exclude))
+relLife <- resid(lm(logMax.Life ~ logMass, data = d, na.action = na.exclude))
+relNewbornMass <- resid(lm(logNewborn ~ logMass, data = d, na.action = na.exclude))
+relWeaningMass <- resid(lm(logWean.Mass ~ logMass, data = d, na.action = na.exclude))
+
+d$relGestation <- relGest
+d$relWeaning <- relWean
+d$relAFR <- relAFR
+d$relLife <- relLife
+d$relNewbornMass <- relNewbornMass
+d$relWeaningMass <- relWeaningMass
+
+d
+```
+# Step 5: Plotting Residuals
+
+## Plotting residuals of max lifespan (relLife) in relation to Order
+```{r}
+ggplot(d, aes(x = order, y = relLife)) +
+  geom_point() +
+  geom_hline(yintercept = 0) +
+  scale_x_discrete(guide = guide_axis(angle = 90)) +
+  theme_bw()
+```
+
+Primates, Rodentia and Xenarthra have the highest residuals of relative max lifespan. 
+
+## Plotting residuals of newborn mass (relNewbornMass) in relation to Order
+
+```{r}
+ggplot(d, aes(x = order, y = relNewbornMass)) +
+  geom_point() +
+  geom_hline(yintercept = 0) +
+  scale_x_discrete(guide = guide_axis(angle = 90)) +
+  theme_bw()
+```
+
+Cetacea and Rodentia have the highest residuals of relative newborn mass. 
+
+
+## Plotting residuals of weaning mass (relWeaningMass) in relation to Order
+
+```{r}
+ggplot(d, aes(x = order, y = relWeaningMass)) +
+  geom_point() +
+  geom_hline(yintercept = 0) +
+  scale_x_discrete(guide = guide_axis(angle = 90)) +
+  theme_bw()
+```
+
+Carnivora, Primates, Artiodactyla and Perissodactyla have the highest residuals for relative weaning mass. 
+
+# Step 6: Running Models and Model Selection 
+
+Droping NA values from dataset
+```{r}
+d <- d %>% 
+  drop_na()
+
+d
+```
+
+## Using Forward Selection to Determine which variables best predict max.life from predictor variables gestation(mo), newborn(g), weaning(mo), wean mass(g), litters/year, and overall body mass(g).
+
+```{r}
+m0 <- lm(data = d, logMax.Life ~ 1) #intercept only model
+summary(m0)
+
+add1(m0, scope = . ~ . + logGestation + logNewborn + logWeaning + logWean.Mass + `logLitters/Year` + logMass, test = "F")
+
+
+m1 <- update(m0, formula = . ~ . + logGestation) #logGestation has the highest F value and the lowest RSS and the lowest AIC value so has the most explanatory power even though all predictor variables are significant 
+summary(m1)
+
+add1(m1, scope = . ~ . + logGestation + logNewborn + logWeaning + logWean.Mass + `logLitters/Year` + logMass, test = "F")
+
+m2 <- update(m1, formula = . ~ . + `logLitters/Year`) #`logLitters/Year` has the highest F value and the lowest RSS and the lowest AIC value so has the most explanatory power
+summary(m2)
+
+add1(m2, scope = . ~ . + logGestation + logNewborn + logWeaning + logWean.Mass + `logLitters/Year` + logMass, test = "F")
+
+m3 <- update(m2, formula = . ~ . + logMass) #logMass has the highest F value and the lowest RSS and the lowest AIC value so has the most explanatory power
+summary(m3)
+
+add1(m3, scope = . ~ . + logGestation + logNewborn + logWeaning + logWean.Mass + `logLitters/Year` + logMass, test = "F")
+
+m4 <- update(m3, formula = . ~ . + logWeaning) #logWeaning has the highest F value and the lowest RSS and the lowest AIC value so has the most explanatory power
+summary(m4)
+
+add1(m4, scope = . ~ . + logGestation + logNewborn + logWeaning + logWean.Mass + `logLitters/Year` + logMass, test = "F")
+
+m5 <- update(m4, formula = . ~ . + logNewborn) #logNewborn has the highest F value and the lowest RSS and the lowest AIC value so has the most explanatory power
+summary(m5)
+
+add1(m5, scope = . ~ . + logGestation + logNewborn + logWeaning + logWean.Mass + `logLitters/Year` + logMass, test = "F")
+
+m6 <- update(m5, formula = . ~ . + logWean.Mass) #logWean.Mass has the highest F value and the lowest RSS and the lowest AIC value so has the most explanatory power
+summary(m6)
+
+```
+## AICc values to determine best model
+```{r}
+aictab(list(m0, m1, m2, m3, m4, m5, m6), c("m0", "m1", "m2", "m3", "m4", "m5", "m6"))
+```
+
+Model 4 is selected to be the best! Models 4, 5 and 6 all have delta AICc values of less than 4. These top models include all variables but in relation to models 0-3 include logWeaning, logNewborn and logWean.Mass. 
+
+## Using Forward Selection to Determine which variables best predict AFR from predictor variables gestation(mo), newborn(g), weaning(mo), wean mass(g), litters/year, and overall body mass(g).
+
+```{r}
+m2_0 <- lm(data = d, logAFR ~ 1) #intercept only model
+summary(m2_0)
+
+add1(m2_0, scope = . ~ . + logGestation + logNewborn + logWeaning + logWean.Mass + `logLitters/Year` + logMass, test = "F")
+
+
+m2_1 <- update(m2_0, formula = . ~ . + `logLitters/Year`) #`logLitters/Year`  has the highest F value and the lowest RSS and the lowest AIC value so has the most explanatory power even though all predictor variables are significant 
+summary(m2_1)
+
+add1(m2_1, scope = . ~ . + logGestation + logNewborn + logWeaning + logWean.Mass + `logLitters/Year` + logMass, test = "F")
+
+m2_2 <- update(m2_1, formula = . ~ . + logGestation) #logGestation has the highest F value and the lowest RSS and the lowest AIC value so has the most explanatory power
+summary(m2_2)
+
+add1(m2_2, scope = . ~ . + logGestation + logNewborn + logWeaning + logWean.Mass + `logLitters/Year` + logMass, test = "F")
+
+m2_3 <- update(m2_2, formula = . ~ . + logWeaning) #logWeaning has the highest F value and the lowest RSS and the lowest AIC value so has the most explanatory power
+summary(m2_3)
+
+add1(m2_3, scope = . ~ . + logGestation + logNewborn + logWeaning + logWean.Mass + `logLitters/Year` + logMass, test = "F")
+
+m2_4 <- update(m2_3, formula = . ~ . + logMass) #logMass has the highest F value and the lowest RSS and the lowest AIC value so has the most explanatory power
+summary(m2_4)
+
+add1(m2_4, scope = . ~ . + logGestation + logNewborn + logWeaning + logWean.Mass + `logLitters/Year` + logMass, test = "F")
+
+m2_5 <- update(m2_4, formula = . ~ . + logWean.Mass) #logWean.Mass has the highest F value and the lowest RSS and the lowest AIC value so has the most explanatory power
+summary(m2_5)
+
+add1(m2_5, scope = . ~ . + logGestation + logNewborn + logWeaning + logWean.Mass + `logLitters/Year` + logMass, test = "F")
+
+m2_6 <- update(m2_5, formula = . ~ . + logNewborn) #logNewborn has the highest F value and the lowest RSS and the lowest AIC value so has the most explanatory power
+summary(m2_6)
+
+```
+
+## AICc values to determine best model
+```{r}
+aictab(list(m2_0, m2_1, m2_2, m2_3, m2_4, m2_5, m2_6), c("m2_0", "m2_1", "m2_2", "m2_3", "m2_4", "m2_5", "m2_6"))
+```
+
+Model 4 is again predicted to be the best model. Models 4, 3, 5 and 2 all have delta AICc values of less than 4. The variables that appear in these top models are logMass, logWeaning, logWean.Mass and logGestation. 
+
+## Plotting Model Avg. Coefficients and CI's
+```{r}
+#Model-Average Coefficients and CIs for top models for max.life
+m_maxlife <- lm(data = d, logMax.Life ~ logGestation + logNewborn + logWeaning + logWean.Mass + `logLitters/Year` + logMass, na.action = "na.fail")
+ms_maxlife <- dredge(m_maxlife)
+(mods.avg1 <- summary(model.avg(ms_maxlife, subset = delta < 4,fit = TRUE)))
+confint
+plot(mods.avg1, full = TRUE, intercept = FALSE)
+
+
+#Model-Average Coefficients and CIs for top models for AFR
+m_AFR <- lm(data = d, logAFR ~ logGestation + logNewborn + logWeaning + logWean.Mass + `logLitters/Year` + logMass, na.action = "na.fail")
+ms_AFR <- dredge(m_AFR)
+(mods.avg2 <- summary(model.avg(ms_AFR, subset = delta < 4,fit = TRUE)))
+confint
+plot(mods.avg2, full = TRUE, intercept = FALSE)
+
+
+
+```
+
+
+
